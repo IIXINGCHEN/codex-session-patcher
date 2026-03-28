@@ -54,8 +54,8 @@
         </n-space>
       </n-card>
 
-      <!-- 会话清理配置 -->
-      <n-card :title="$t('action.clean')" size="small">
+      <!-- 平台支持 -->
+      <n-card :title="$t('settings.platformSupport')" size="small">
         <n-space vertical>
           <n-form-item :label="$t('settings.claudeCodeEnabled')">
             <n-switch
@@ -67,6 +67,21 @@
             </template>
           </n-form-item>
 
+          <n-form-item :label="$t('settings.opencodeEnabled')">
+            <n-switch
+              :value="settingsStore.opencodeEnabled"
+              @update:value="settingsStore.setOpencodeEnabled"
+            />
+            <template #feedback>
+              <span class="form-hint">{{ $t('settings.opencodeEnabledHint') }}</span>
+            </template>
+          </n-form-item>
+        </n-space>
+      </n-card>
+
+      <!-- 会话清理配置 -->
+      <n-card :title="$t('action.clean')" size="small">
+        <n-space vertical>
           <n-form-item :label="$t('settings.showAllSessions')">
             <n-switch
               :value="settingsStore.showAllSessions"

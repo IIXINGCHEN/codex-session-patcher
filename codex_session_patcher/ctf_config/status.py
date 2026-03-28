@@ -9,6 +9,7 @@ from typing import Optional
 
 CTF_MARKER = 'managed-by: codex-session-patcher:ctf'
 DEFAULT_CLAUDE_CTF_WORKSPACE = os.path.expanduser("~/.claude-ctf-workspace")
+DEFAULT_OPENCODE_CTF_WORKSPACE = os.path.expanduser("~/.opencode-ctf-workspace")
 
 
 GLOBAL_MARKER = '# __csp_ctf_global__'
@@ -31,6 +32,12 @@ class CTFStatus:
     claude_prompt_exists: bool = False
     claude_workspace_path: Optional[str] = None
     claude_prompt_path: Optional[str] = None
+    # OpenCode
+    opencode_installed: bool = False
+    opencode_workspace_exists: bool = False
+    opencode_prompt_exists: bool = False
+    opencode_workspace_path: Optional[str] = None
+    opencode_prompt_path: Optional[str] = None
 
 
 def check_ctf_status() -> CTFStatus:
@@ -86,5 +93,24 @@ def check_ctf_status() -> CTFStatus:
             pass
 
     status.claude_installed = status.claude_workspace_exists and status.claude_prompt_exists
+
+    # ── OpenCode 检查 ──
+    opencode_workspace = DEFAULT_OPENCODE_CTF_WORKSPACE
+    opencode_agents_path = os.path.join(opencode_workspace, "AGENTS.md")
+
+    status.opencode_workspace_path = opencode_workspace
+    status.opencode_prompt_path = opencode_agents_path
+    status.opencode_workspace_exists = os.path.isdir(opencode_workspace)
+
+    if os.path.exists(opencode_agents_path):
+        try:
+            with open(opencode_agents_path, 'r', encoding='utf-8') as f:
+                content = f.read(500)
+                if CTF_MARKER in content:
+                    status.opencode_prompt_exists = True
+        except Exception:
+            pass
+
+    status.opencode_installed = status.opencode_workspace_exists and status.opencode_prompt_exists
 
     return status

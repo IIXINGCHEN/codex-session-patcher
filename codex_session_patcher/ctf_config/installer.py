@@ -2,6 +2,7 @@
 """
 CTF 配置安装器
 """
+from __future__ import annotations
 
 import os
 import shutil
@@ -11,8 +12,12 @@ from typing import Optional
 from .templates import (
     CTF_CONFIG_TEMPLATE, SECURITY_MODE_PROMPT,
     CLAUDE_CODE_SECURITY_MODE_PROMPT, CLAUDE_CODE_CTF_README,
+    OPENCODE_SECURITY_MODE_PROMPT, OPENCODE_CTF_CONFIG, OPENCODE_CTF_README,
 )
-from .status import check_ctf_status, CTFStatus, GLOBAL_MARKER, CTF_MARKER, DEFAULT_CLAUDE_CTF_WORKSPACE
+from .status import (
+    check_ctf_status, CTFStatus, GLOBAL_MARKER, CTF_MARKER,
+    DEFAULT_CLAUDE_CTF_WORKSPACE, DEFAULT_OPENCODE_CTF_WORKSPACE,
+)
 
 
 class CTFConfigInstaller:
@@ -24,9 +29,12 @@ class CTFConfigInstaller:
         self.prompts_dir = os.path.join(self.codex_dir, "prompts")
         self.prompt_path = os.path.join(self.prompts_dir, "security_mode.md")
 
-    def install(self) -> tuple[bool, str]:
+    def install(self, custom_prompt: str = None) -> tuple[bool, str]:
         """
         安装 Profile 模式（自动禁用 Global 模式）
+
+        Args:
+            custom_prompt: 自定义提示词内容，为 None 时使用默认模板
 
         Returns:
             tuple[bool, str]: (是否成功, 消息)
@@ -50,8 +58,9 @@ class CTFConfigInstaller:
                 backup_path = self._backup_config()
 
             # 4. 写入 security_mode.md
+            prompt_content = custom_prompt or SECURITY_MODE_PROMPT
             with open(self.prompt_path, 'w', encoding='utf-8') as f:
-                f.write(SECURITY_MODE_PROMPT)
+                f.write(prompt_content)
 
             # 5. 更新或创建 config.toml
             profile_added = self._update_config()
@@ -361,33 +370,44 @@ class ClaudeCodeCTFInstaller:
         self.readme_path = os.path.join(self.workspace_dir, "README.md")
         self.settings_local = os.path.expanduser("~/.claude/settings.local.json")
 
-    def install(self, inject_permissions: bool = False) -> tuple[bool, str]:
+    def install(self, custom_prompt: str = None, inject_permissions: bool = False) -> tuple[bool, str]:
         """
         安装 Claude Code CTF 配置
 
         Args:
+            custom_prompt: 自定义提示词内容，为 None 时使用默认模板
             inject_permissions: 是否向 settings.local.json 注入宽松权限
 
         Returns:
             tuple[bool, str]: (是否成功, 消息)
         """
         try:
+            details = []
+
             # 1. 创建工作空间目录
             os.makedirs(self.claude_dir, exist_ok=True)
+            details.append(f"✓ 已创建工作空间: {self.workspace_dir}")
 
             # 2. 写入 .claude/CLAUDE.md
+            prompt_content = custom_prompt or CLAUDE_CODE_SECURITY_MODE_PROMPT
             with open(self.prompt_path, 'w', encoding='utf-8') as f:
-                f.write(CLAUDE_CODE_SECURITY_MODE_PROMPT)
+                f.write(prompt_content)
+            details.append(f"✓ 已创建 CLAUDE.md: {self.prompt_path}")
 
             # 3. 写入 README
             with open(self.readme_path, 'w', encoding='utf-8') as f:
                 f.write(CLAUDE_CODE_CTF_README)
+            details.append(f"✓ 已创建 README: {self.readme_path}")
 
             # 4. 可选：注入权限
             if inject_permissions:
                 self._inject_permissions()
+                details.append("✓ 已注入宽松权限到 settings.local.json")
 
-            return True, "Claude Code 安全测试配置已安装"
+            details.append("")
+            details.append("使用方法: cd ~/.claude-ctf-workspace && claude")
+
+            return True, "\n".join(details)
 
         except Exception as e:
             return False, f"安装失败: {str(e)}"
@@ -400,6 +420,8 @@ class ClaudeCodeCTFInstaller:
             tuple[bool, str]: (是否成功, 消息)
         """
         try:
+            details = []
+
             # 1. 删除 .claude/CLAUDE.md（验证标记）
             if os.path.exists(self.prompt_path):
                 try:
@@ -407,28 +429,36 @@ class ClaudeCodeCTFInstaller:
                         content = f.read(500)
                     if CTF_MARKER in content:
                         os.remove(self.prompt_path)
+                        details.append(f"✓ 已删除 CLAUDE.md: {self.prompt_path}")
                     else:
                         return False, "CLAUDE.md 不是由本工具创建的，跳过删除"
                 except Exception:
                     os.remove(self.prompt_path)
+                    details.append(f"✓ 已删除 CLAUDE.md: {self.prompt_path}")
 
             # 2. 删除 README（如果存在）
             if os.path.exists(self.readme_path):
                 os.remove(self.readme_path)
+                details.append(f"✓ 已删除 README: {self.readme_path}")
 
             # 3. 尝试清理空目录（不删除用户自建的文件）
             try:
                 if os.path.isdir(self.claude_dir) and not os.listdir(self.claude_dir):
                     os.rmdir(self.claude_dir)
+                    details.append(f"✓ 已删除空目录: {self.claude_dir}")
                 if os.path.isdir(self.workspace_dir) and not os.listdir(self.workspace_dir):
                     os.rmdir(self.workspace_dir)
+                    details.append(f"✓ 已删除工作空间: {self.workspace_dir}")
             except OSError:
                 pass  # 目录非空，保留
 
             # 4. 移除注入的权限
             self._remove_permissions()
 
-            return True, "Claude Code 安全测试配置已卸载"
+            if not details:
+                return True, "Claude Code CTF 配置未安装"
+
+            return True, "\n".join(details)
 
         except Exception as e:
             return False, f"卸载失败: {str(e)}"
@@ -504,6 +534,111 @@ class ClaudeCodeCTFInstaller:
             return backup_path
         except Exception:
             return None
+
+    def get_status(self) -> CTFStatus:
+        """获取当前配置状态"""
+        return check_ctf_status()
+
+
+class OpenCodeCTFInstaller:
+    """OpenCode CTF 配置安装器"""
+
+    def __init__(self):
+        self.workspace_dir = DEFAULT_OPENCODE_CTF_WORKSPACE
+        self.agents_md_path = os.path.join(self.workspace_dir, "AGENTS.md")
+        self.config_path = os.path.join(self.workspace_dir, "opencode.json")
+        self.readme_path = os.path.join(self.workspace_dir, "README.md")
+
+    def install(self, custom_prompt: str = None) -> tuple[bool, str]:
+        """
+        安装 OpenCode CTF 配置
+
+        Args:
+            custom_prompt: 自定义提示词内容，为 None 时使用默认模板
+
+        Returns:
+            tuple[bool, str]: (是否成功, 消息)
+        """
+        try:
+            details = []
+
+            # 1. 创建工作空间目录
+            os.makedirs(self.workspace_dir, exist_ok=True)
+            details.append(f"✓ 已创建工作空间: {self.workspace_dir}")
+
+            # 2. 写入 AGENTS.md
+            prompt_content = custom_prompt or OPENCODE_SECURITY_MODE_PROMPT
+            with open(self.agents_md_path, 'w', encoding='utf-8') as f:
+                f.write(prompt_content)
+            details.append(f"✓ 已创建 AGENTS.md: {self.agents_md_path}")
+
+            # 3. 写入 opencode.json
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                f.write(OPENCODE_CTF_CONFIG)
+            details.append(f"✓ 已创建 opencode.json: {self.config_path}")
+
+            # 4. 写入 README
+            with open(self.readme_path, 'w', encoding='utf-8') as f:
+                f.write(OPENCODE_CTF_README)
+            details.append(f"✓ 已创建 README: {self.readme_path}")
+
+            details.append("")
+            details.append("使用方法: cd ~/.opencode-ctf-workspace && opencode")
+
+            return True, "\n".join(details)
+
+        except Exception as e:
+            return False, f"安装失败: {str(e)}"
+
+    def uninstall(self) -> tuple[bool, str]:
+        """
+        卸载 OpenCode CTF 配置
+
+        Returns:
+            tuple[bool, str]: (是否成功, 消息)
+        """
+        try:
+            details = []
+
+            # 1. 删除 AGENTS.md（验证标记）
+            if os.path.exists(self.agents_md_path):
+                try:
+                    with open(self.agents_md_path, 'r', encoding='utf-8') as f:
+                        content = f.read(500)
+                    if CTF_MARKER in content:
+                        os.remove(self.agents_md_path)
+                        details.append(f"✓ 已删除 AGENTS.md: {self.agents_md_path}")
+                    else:
+                        return False, "AGENTS.md 不是由本工具创建的，跳过删除"
+                except Exception:
+                    os.remove(self.agents_md_path)
+                    details.append(f"✓ 已删除 AGENTS.md: {self.agents_md_path}")
+
+            # 2. 删除 opencode.json
+            if os.path.exists(self.config_path):
+                os.remove(self.config_path)
+                details.append(f"✓ 已删除 opencode.json: {self.config_path}")
+
+            # 3. 删除 README
+            if os.path.exists(self.readme_path):
+                os.remove(self.readme_path)
+                details.append(f"✓ 已删除 README: {self.readme_path}")
+
+            # 4. 尝试清理空目录
+            try:
+                if os.path.isdir(self.workspace_dir) and not os.listdir(self.workspace_dir):
+                    os.rmdir(self.workspace_dir)
+                    details.append(f"✓ 已删除工作空间: {self.workspace_dir}")
+            except OSError:
+                pass
+
+            if not details:
+                return True, "OpenCode CTF 配置未安装"
+
+            return True, "\n".join(details)
+
+        except Exception as e:
+            return False, f"卸载失败: {str(e)}"
 
     def get_status(self) -> CTFStatus:
         """获取当前配置状态"""

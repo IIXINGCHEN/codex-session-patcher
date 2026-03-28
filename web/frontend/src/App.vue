@@ -21,8 +21,69 @@
             <span class="title">Codex Session Patcher</span>
           </div>
           <div class="header-right">
+            <!-- GitHub -->
+            <n-tooltip trigger="hover" placement="bottom">
+              <template #trigger>
+                <a href="https://github.com/ryfineZ/codex-session-patcher" target="_blank" class="social-link" aria-label="GitHub">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                </a>
+              </template>
+              GitHub
+            </n-tooltip>
+
+            <!-- X (Twitter) -->
+            <n-tooltip trigger="hover" placement="bottom">
+              <template #trigger>
+                <a href="https://x.com/ZhangYufan73644" target="_blank" class="social-link" aria-label="X">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                </a>
+              </template>
+              X (Twitter)
+            </n-tooltip>
+
+            <!-- 微信公众号 -->
+            <n-popover trigger="click" placement="bottom-end" :width="200">
+              <template #trigger>
+                <button class="social-link" aria-label="微信公众号">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.161 1.71-1.484 1.255-2.263 3.057-1.944 4.85.976 5.58 9.277 7.679 14.6 4.066.061-.04.135-.06.211-.06a.29.29 0 0 1 .089.014l1.523.868a.29.29 0 0 0 .14.047c.134 0 .24-.11.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 0 1 .181-.555C23.002 17.394 24 15.829 24 14.098c0-3.226-3.13-5.765-7.062-5.24zm-3.85 3.045c.56 0 1.012.46 1.012 1.028a1.02 1.02 0 0 1-1.012 1.028 1.02 1.02 0 0 1-1.013-1.028c0-.568.453-1.028 1.013-1.028zm5.886 0c.56 0 1.012.46 1.012 1.028a1.02 1.02 0 0 1-1.012 1.028 1.02 1.02 0 0 1-1.013-1.028c0-.568.453-1.028 1.013-1.028z"/></svg>
+                </button>
+              </template>
+              <div style="text-align: center; padding: 8px 0">
+                <img src="/qr-wechat-mp.png" alt="微信公众号" style="width: 160px; height: 160px; border-radius: 4px" />
+                <div style="margin-top: 8px; font-size: 12px; opacity: 0.7">钢之AI术师</div>
+              </div>
+            </n-popover>
+
+            <!-- Buy me a coffee -->
+            <n-button size="small" type="primary" class="sponsor-btn" @click="showSponsor = true">
+              ☕ Buy me a coffee
+            </n-button>
+
             <LocaleSwitch />
           </div>
+
+          <!-- 赞助弹窗 -->
+          <n-modal v-model:show="showSponsor" preset="card" :style="{ width: '320px' }" title="Buy me a coffee ☕">
+            <n-tabs type="segment" size="small" v-model:value="sponsorTab">
+              <n-tab-pane name="wechat" tab="微信赞赏">
+                <div style="text-align: center; padding: 12px 0">
+                  <img src="/qr-sponsor-wechat.png" alt="微信收款码" style="width: 200px; height: 200px; border-radius: 8px" />
+                  <div style="margin-top: 12px; font-size: 13px; opacity: 0.7">感谢支持！🙏</div>
+                </div>
+              </n-tab-pane>
+              <n-tab-pane name="crypto" tab="USDC (Arbitrum)">
+                <div style="text-align: center; padding: 12px 0">
+                  <img src="/qr-sponsor-crypto.png" alt="USDC 收款码" style="width: 200px; height: 200px; border-radius: 8px" />
+                  <div style="margin-top: 12px">
+                    <n-text style="font-size: 11px; font-family: monospace; word-break: break-all; opacity: 0.8">
+                      0xAeEBb76262D5D452Aa0D4b19E193Dd2402397d02
+                    </n-text>
+                  </div>
+                  <n-button size="small" style="margin-top: 8px" @click="copyWalletAddr">复制地址</n-button>
+                </div>
+              </n-tab-pane>
+            </n-tabs>
+          </n-modal>
         </n-layout-header>
 
         <!-- Tab 导航 -->
@@ -121,6 +182,14 @@ const { t } = useI18n()
 const activeTab = ref('sessions')
 const sidebarCollapsed = ref(false)
 const isMobile = ref(false)
+const showSponsor = ref(false)
+const sponsorTab = ref('wechat')
+
+async function copyWalletAddr() {
+  try {
+    await navigator.clipboard.writeText('0xAeEBb76262D5D452Aa0D4b19E193Dd2402397d02')
+  } catch {}
+}
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
 const logStore = useLogStore()
@@ -241,6 +310,36 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.social-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--n-text-color-3, #888);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: none;
+  transition: color 0.2s, background 0.2s;
+}
+.social-link:hover {
+  color: var(--n-text-color-1, #fff);
+  background: rgba(255,255,255,0.08);
+}
+
+.sponsor-btn {
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .sponsor-btn {
+    display: none;
+  }
 }
 
 .menu-toggle {

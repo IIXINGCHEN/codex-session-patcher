@@ -10,6 +10,7 @@ from enum import Enum
 class SessionFormatEnum(str, Enum):
     CODEX = "codex"
     CLAUDE_CODE = "claude_code"
+    OPENCODE = "opencode"
 
 
 class ChangeType(str, Enum):
@@ -168,6 +169,12 @@ class CTFStatusResponse(BaseModel):
     claude_prompt_exists: bool = False
     claude_workspace_path: Optional[str] = None
     claude_prompt_path: Optional[str] = None
+    # OpenCode
+    opencode_installed: bool = False
+    opencode_workspace_exists: bool = False
+    opencode_prompt_exists: bool = False
+    opencode_workspace_path: Optional[str] = None
+    opencode_prompt_path: Optional[str] = None
 
 
 class CTFInstallResponse(BaseModel):

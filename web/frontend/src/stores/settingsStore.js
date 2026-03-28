@@ -11,6 +11,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const mockResponse = ref('好的，我已完全理解您的需求，并将配合您完成接下来的逆向分析与代码编写工作。请提供下一步指令。')
   const showAllSessions = ref(localStorage.getItem('showAllSessions') === 'true')
   const claudeCodeEnabled = ref(localStorage.getItem('claudeCodeEnabled') === 'true')
+  const opencodeEnabled = ref(localStorage.getItem('opencodeEnabled') === 'true')
   const loading = ref(false)
   const changed = ref(false)
 
@@ -77,6 +78,11 @@ export const useSettingsStore = defineStore('settings', () => {
     localStorage.setItem('claudeCodeEnabled', val ? 'true' : 'false')
   }
 
+  function setOpencodeEnabled(val) {
+    opencodeEnabled.value = val
+    localStorage.setItem('opencodeEnabled', val ? 'true' : 'false')
+  }
+
   return {
     aiEnabled,
     aiEndpoint,
@@ -86,6 +92,7 @@ export const useSettingsStore = defineStore('settings', () => {
     mockResponse,
     showAllSessions,
     claudeCodeEnabled,
+    opencodeEnabled,
     loading,
     changed,
     loadSettings,
@@ -94,5 +101,6 @@ export const useSettingsStore = defineStore('settings', () => {
     markChanged,
     setShowAllSessions,
     setClaudeCodeEnabled,
+    setOpencodeEnabled,
   }
 })

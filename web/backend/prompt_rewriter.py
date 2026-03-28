@@ -4,6 +4,7 @@
 
 使用 AI 将可能被拒绝的请求改写为更易接受的形式。
 """
+from __future__ import annotations
 
 from typing import Optional
 
@@ -11,7 +12,7 @@ import httpx
 
 from codex_session_patcher.ctf_config.templates import (
     PROMPT_REWRITER_SYSTEM,
-    PROMPT_REWRITER_SYSTEM_CLAUDE,
+    PROMPT_REWRITER_SYSTEM_WITH_CTF,
 )
 
 
@@ -21,6 +22,7 @@ async def rewrite_prompt(
     ai_key: str,
     ai_model: str,
     target: str = "codex",
+    ctf_prompt: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     改写提示词
@@ -30,6 +32,7 @@ async def rewrite_prompt(
         ai_endpoint: AI API endpoint
         ai_key: API key
         ai_model: 模型名称
+        ctf_prompt: 当前注入的 CTF 系统提示词（有则配合使用）
 
     Returns:
         tuple[str, str]: (改写后的提示词, 使用的策略)
@@ -45,7 +48,10 @@ async def rewrite_prompt(
     if ai_key:
         headers['Authorization'] = f'Bearer {ai_key}'
 
-    system_prompt = PROMPT_REWRITER_SYSTEM_CLAUDE if target == "claude_code" else PROMPT_REWRITER_SYSTEM
+    if ctf_prompt and ctf_prompt.strip():
+        system_prompt = PROMPT_REWRITER_SYSTEM_WITH_CTF.format(ctf_prompt=ctf_prompt.strip())
+    else:
+        system_prompt = PROMPT_REWRITER_SYSTEM
     user_message = f"请改写以下请求：\n\n{original_request}"
 
     body = {

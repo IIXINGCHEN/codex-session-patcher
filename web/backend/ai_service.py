@@ -4,6 +4,7 @@ AI 智能改写服务
 
 调用 LLM 根据对话上下文生成配合性回复，替代拒绝内容。
 """
+from __future__ import annotations
 
 import json
 from typing import Optional
@@ -71,7 +72,7 @@ def extract_conversation_context(
                 if content:
                     context.append({'role': 'assistant', 'content': content[:2000]})
     else:
-        # Claude Code 格式
+        # Claude Code / OpenCode 格式（结构相同）
         for idx in range(refusal_index - 1, -1, -1):
             if len(context) >= max_messages:
                 break
@@ -196,26 +197,38 @@ async def generate_ai_rewrite(
     settings: Settings,
     custom_keywords: Optional[dict] = None,
     session_format: SessionFormat = SessionFormat.CODEX,
+    session_id: Optional[str] = None,
 ) -> AIRewriteResponse:
     """生成 AI 改写内容 - 处理所有拒绝消息"""
     detector = RefusalDetector(custom_keywords)
     strategy = get_format_strategy(session_format)
 
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            raw_lines = f.readlines()
-    except Exception as e:
-        return AIRewriteResponse(success=False, error=f'读取文件失败: {e}')
-
-    parsed_lines = []
-    for line in raw_lines:
-        line = line.strip()
-        if not line:
-            continue
+    if session_format == SessionFormat.OPENCODE:
+        # OpenCode 使用 SQLite，不能当文本文件读
+        if not session_id:
+            return AIRewriteResponse(success=False, error='OpenCode 会话需要提供 session_id')
         try:
-            parsed_lines.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+            from codex_session_patcher.core.sqlite_adapter import OpenCodeDBAdapter
+            adapter = OpenCodeDBAdapter(file_path)
+            parsed_lines = adapter.load_session_messages(session_id)
+        except Exception as e:
+            return AIRewriteResponse(success=False, error=f'读取 OpenCode 会话失败: {e}')
+    else:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                raw_lines = f.readlines()
+        except Exception as e:
+            return AIRewriteResponse(success=False, error=f'读取文件失败: {e}')
+
+        parsed_lines = []
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed_lines.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
     # 找到所有拒绝的助手消息
     assistant_msgs = strategy.get_assistant_messages(parsed_lines)

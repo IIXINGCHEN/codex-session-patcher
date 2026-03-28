@@ -1,7 +1,9 @@
 """
 API 路由 — 支持 Codex CLI 和 Claude Code 双格式
 """
+from __future__ import annotations
 
+import logging
 import os
 import json
 import re
@@ -34,6 +36,9 @@ from codex_session_patcher.core import (
     MOCK_RESPONSE,
 )
 from codex_session_patcher.core.patcher import clean_session_jsonl, save_session_jsonl
+from codex_session_patcher.core.sqlite_adapter import OpenCodeDBAdapter, DEFAULT_OPENCODE_DB
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -118,6 +123,8 @@ def _resolve_format(format_str: str) -> Optional[SessionFormat]:
         return SessionFormat.CODEX
     elif format_str == 'claude_code':
         return SessionFormat.CLAUDE_CODE
+    elif format_str == 'opencode':
+        return SessionFormat.OPENCODE
     return None  # auto
 
 
@@ -125,6 +132,8 @@ def _to_schema_format(fmt: SessionFormat) -> SessionFormatEnum:
     """将核心 SessionFormat 转为 API schema enum"""
     if fmt == SessionFormat.CLAUDE_CODE:
         return SessionFormatEnum.CLAUDE_CODE
+    elif fmt == SessionFormat.OPENCODE:
+        return SessionFormatEnum.OPENCODE
     return SessionFormatEnum.CODEX
 
 
@@ -151,7 +160,7 @@ def check_session_refusal(file_path: str, fmt: SessionFormat = SessionFormat.COD
             if content and _detector.detect(content):
                 count += 1
     except Exception:
-        pass
+        logger.warning("检查会话拒绝状态失败", exc_info=True)
     return count > 0, count
 
 
@@ -178,7 +187,7 @@ def count_thinking_blocks(file_path: str, fmt: SessionFormat) -> int:
                         if isinstance(item, dict) and item.get('type') == 'thinking':
                             count += 1
     except Exception:
-        pass
+        logger.warning("统计 thinking 块失败", exc_info=True)
     return count
 
 
@@ -196,17 +205,24 @@ def list_sessions(
 
     # 确定需要扫描的目录
     scan_targets = []
+    scan_opencode = False
+
     if session_format is None:
-        # auto 模式：扫描两个目录
+        # auto 模式：扫描所有目录
         if os.path.exists(DEFAULT_SESSION_DIR):
             scan_targets.append((DEFAULT_SESSION_DIR, SessionFormat.CODEX))
         if os.path.exists(DEFAULT_CLAUDE_SESSION_DIR):
             scan_targets.append((DEFAULT_CLAUDE_SESSION_DIR, SessionFormat.CLAUDE_CODE))
+        if os.path.exists(DEFAULT_OPENCODE_DB):
+            scan_opencode = True
     elif session_format == SessionFormat.CODEX:
         scan_targets.append((DEFAULT_SESSION_DIR, SessionFormat.CODEX))
     elif session_format == SessionFormat.CLAUDE_CODE:
         scan_targets.append((DEFAULT_CLAUDE_SESSION_DIR, SessionFormat.CLAUDE_CODE))
+    elif session_format == SessionFormat.OPENCODE:
+        scan_opencode = True
 
+    # 扫描 JSONL 格式会话（Codex / Claude Code）
     for session_dir, fmt in scan_targets:
         parser = SessionParser(session_dir, session_format=fmt)
         for info in parser.list_sessions():
@@ -239,7 +255,49 @@ def list_sessions(
                     project_path=info.project_path,
                 ))
             except Exception:
+                logger.warning("处理会话 %s 失败", info.path, exc_info=True)
                 continue
+
+    # 扫描 OpenCode SQLite 会话
+    if scan_opencode:
+        try:
+            adapter = OpenCodeDBAdapter()
+            oc_sessions = adapter.list_sessions()
+            strategy = get_format_strategy(SessionFormat.OPENCODE)
+            detector = RefusalDetector()
+            backup_count = len(adapter.list_backups())
+
+            for oc_info in oc_sessions:
+                try:
+                    has_refusal = False
+                    refusal_count = 0
+                    if not skip_refusal_check:
+                        messages = adapter.load_session_messages(oc_info['session_id'])
+                        for _, msg in strategy.get_assistant_messages(messages):
+                            content = strategy.extract_text_content(msg)
+                            if content and detector.detect(content):
+                                refusal_count += 1
+                        has_refusal = refusal_count > 0
+
+                    sessions.append(Session(
+                        id=oc_info['session_id'],
+                        filename=oc_info['session_id'],
+                        path=DEFAULT_OPENCODE_DB,
+                        date=oc_info['date'],
+                        mtime=oc_info['mtime_str'],
+                        size=0,
+                        has_refusal=has_refusal,
+                        refusal_count=refusal_count,
+                        has_backup=backup_count > 0,
+                        backup_count=backup_count,
+                        format=SessionFormatEnum.OPENCODE,
+                        project_path=oc_info.get('project_path', ''),
+                    ))
+                except Exception:
+                    logger.warning("处理 OpenCode 会话 %s 失败", oc_info.get('session_id', ''), exc_info=True)
+                    continue
+        except Exception:
+            logger.warning("扫描 OpenCode 数据库失败", exc_info=True)
 
     sessions.sort(key=lambda x: x.mtime, reverse=True)
     return sessions
@@ -249,6 +307,8 @@ def _session_core_format(session: Session) -> SessionFormat:
     """从 API Session schema 转为核心 SessionFormat"""
     if session.format == SessionFormatEnum.CLAUDE_CODE:
         return SessionFormat.CLAUDE_CODE
+    elif session.format == SessionFormatEnum.OPENCODE:
+        return SessionFormat.OPENCODE
     return SessionFormat.CODEX
 
 
@@ -256,27 +316,37 @@ def _session_core_format(session: Session) -> SessionFormat:
 
 def preview_session(file_path: str, mock_response: str = MOCK_RESPONSE,
                    custom_keywords: dict = None,
-                   session_format: SessionFormat = SessionFormat.CODEX) -> PreviewResponse:
+                   session_format: SessionFormat = SessionFormat.CODEX,
+                   session_id: str = None) -> PreviewResponse:
     """预览会话修改"""
     changes = []
     detector = RefusalDetector(custom_keywords)
     strategy = get_format_strategy(session_format)
 
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-    except Exception:
-        return PreviewResponse(has_changes=False, changes=[])
-
-    parsed_lines = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+    # OpenCode: 从 SQLite 加载
+    if session_format == SessionFormat.OPENCODE and session_id:
         try:
-            parsed_lines.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+            adapter = OpenCodeDBAdapter(file_path)
+            parsed_lines = adapter.load_session_messages(session_id)
+        except Exception:
+            logger.warning("加载 OpenCode 会话失败: %s", session_id, exc_info=True)
+            return PreviewResponse(has_changes=False, changes=[])
+    else:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception:
+            return PreviewResponse(has_changes=False, changes=[])
+
+        parsed_lines = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed_lines.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
     # 检测拒绝 & 收集对话摘要
     assistant_msgs = strategy.get_assistant_messages(parsed_lines)
@@ -299,11 +369,21 @@ def preview_session(file_path: str, mock_response: str = MOCK_RESPONSE,
         content = ''
         line_type = line.get('type', '')
 
-        # Claude Code 格式
+        # Claude Code / OpenCode 格式
         if line_type == 'human':
             role = 'user'
             msg = line.get('message', {})
             msg_content = msg.get('content', '')
+            if isinstance(msg_content, str):
+                content = msg_content
+            elif isinstance(msg_content, list):
+                texts = [item.get('text', '') for item in msg_content if isinstance(item, dict) and item.get('type') == 'text']
+                content = '\n'.join(texts)
+        elif line_type == 'user':
+            # OpenCode user 消息
+            role = 'user'
+            msg = line.get('message', {})
+            msg_content = msg.get('content', [])
             if isinstance(msg_content, str):
                 content = msg_content
             elif isinstance(msg_content, list):
@@ -361,7 +441,8 @@ def preview_session(file_path: str, mock_response: str = MOCK_RESPONSE,
 def patch_session(file_path: str, mock_response: str = MOCK_RESPONSE,
                  custom_keywords: dict = None, create_backup: bool = True,
                  replacements: dict = None,
-                 session_format: SessionFormat = SessionFormat.CODEX) -> PatchResponse:
+                 session_format: SessionFormat = SessionFormat.CODEX,
+                 session_id: str = None) -> PatchResponse:
     """执行会话清理"""
     if replacements is None:
         replacements = {}
@@ -370,28 +451,54 @@ def patch_session(file_path: str, mock_response: str = MOCK_RESPONSE,
 
     try:
         backup_path = None
-        if create_backup:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = f"{file_path}.{timestamp}.bak"
-            shutil.copy2(file_path, backup_path)
 
-        parser = SessionParser(session_format=session_format)
-        lines = parser.parse_session_jsonl(file_path)
+        # OpenCode: SQLite 处理
+        if session_format == SessionFormat.OPENCODE and session_id:
+            adapter = OpenCodeDBAdapter(file_path)
+            if create_backup:
+                backup_path = adapter.backup_database()
 
-        # 使用统一的清理逻辑
-        cleaned_lines, modified, core_changes = clean_session_jsonl(
-            lines, detector, show_content=True,
-            mock_response=mock_response,
-            session_format=session_format,
-        )
+            lines = adapter.load_session_messages(session_id)
 
-        # 应用自定义替换（AI 改写的按行替换）
-        if replacements:
-            strategy = get_format_strategy(session_format)
-            for idx, line in enumerate(cleaned_lines):
-                line_num = line.get('_line_num', idx + 1)
-                if line_num in replacements:
-                    cleaned_lines[idx] = strategy.update_text_content(line, replacements[line_num])
+            cleaned_lines, modified, core_changes = clean_session_jsonl(
+                lines, detector, show_content=True,
+                mock_response=mock_response,
+                session_format=session_format,
+            )
+
+            if replacements:
+                strategy = get_format_strategy(session_format)
+                for idx, line in enumerate(cleaned_lines):
+                    line_num = idx + 1
+                    if line_num in replacements:
+                        cleaned_lines[idx] = strategy.update_text_content(line, replacements[line_num])
+
+            # 写回 SQLite
+            adapter.save_session_messages(session_id, cleaned_lines)
+        else:
+            # JSONL 处理（Codex / Claude Code）
+            if create_backup:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_path = f"{file_path}.{timestamp}.bak"
+                shutil.copy2(file_path, backup_path)
+
+            parser = SessionParser(session_format=session_format)
+            lines = parser.parse_session_jsonl(file_path)
+
+            cleaned_lines, modified, core_changes = clean_session_jsonl(
+                lines, detector, show_content=True,
+                mock_response=mock_response,
+                session_format=session_format,
+            )
+
+            if replacements:
+                strategy = get_format_strategy(session_format)
+                for idx, line in enumerate(cleaned_lines):
+                    line_num = line.get('_line_num', idx + 1)
+                    if line_num in replacements:
+                        cleaned_lines[idx] = strategy.update_text_content(line, replacements[line_num])
+
+            save_session_jsonl(cleaned_lines, file_path)
 
         # 转换为 API ChangeDetail
         api_changes = []
@@ -407,9 +514,6 @@ def patch_session(file_path: str, mock_response: str = MOCK_RESPONSE,
                 original=c.original_content,
                 replacement=c.new_content,
             ))
-
-        # 保存
-        save_session_jsonl(cleaned_lines, file_path)
 
         return PatchResponse(
             success=True,
@@ -435,18 +539,25 @@ def load_settings() -> Settings:
                 data = json.load(f)
                 return Settings.model_validate(data)
         except Exception:
-            pass
+            logger.warning("加载配置文件失败: %s", DEFAULT_CONFIG_FILE, exc_info=True)
     return Settings()
 
 
 def save_settings(settings: Settings) -> bool:
-    """保存设置"""
+    """保存设置（保留非 Settings 字段如 ctf_prompts）"""
     try:
-        os.makedirs(os.path.dirname(DEFAULT_CONFIG_FILE), exist_ok=True)
+        config_dir = os.path.dirname(DEFAULT_CONFIG_FILE)
+        os.makedirs(config_dir, exist_ok=True)
+        os.chmod(config_dir, 0o700)
+        # 读取现有配置以保留额外字段
+        existing = _load_raw_config()
+        existing.update(settings.model_dump())
         with open(DEFAULT_CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(settings.model_dump(), f, ensure_ascii=False, indent=2)
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+        os.chmod(DEFAULT_CONFIG_FILE, 0o600)
         return True
     except Exception:
+        logger.warning("保存配置文件失败", exc_info=True)
         return False
 
 
@@ -500,7 +611,7 @@ def compute_backup_diff(current_path: str, backup_path: str,
             ))
 
     except Exception:
-        pass
+        logger.warning("计算备份差异失败", exc_info=True)
     return diff_items
 
 
@@ -559,6 +670,7 @@ async def preview_session_api(session_id: str):
         settings.mock_response,
         settings.custom_keywords,
         session_format=core_fmt,
+        session_id=session_id if core_fmt == SessionFormat.OPENCODE else None,
     )
 
     # 如果有备份，计算 diff
@@ -600,6 +712,7 @@ async def ai_rewrite_session_api(session_id: str):
         result = await generate_ai_rewrite(
             session.path, settings, settings.custom_keywords,
             session_format=core_fmt,
+            session_id=session_id if core_fmt == SessionFormat.OPENCODE else None,
         )
         return result
     except Exception as e:
@@ -635,6 +748,7 @@ async def patch_session_api(session_id: str, body: PatchRequest = None):
         settings.custom_keywords,
         replacements=replacements_map,
         session_format=core_fmt,
+        session_id=session_id if core_fmt == SessionFormat.OPENCODE else None,
     )
 
     if result.success:
@@ -758,6 +872,11 @@ async def get_ctf_status():
         claude_prompt_exists=status.claude_prompt_exists,
         claude_workspace_path=status.claude_workspace_path,
         claude_prompt_path=status.claude_prompt_path,
+        opencode_installed=status.opencode_installed,
+        opencode_workspace_exists=status.opencode_workspace_exists,
+        opencode_prompt_exists=status.opencode_prompt_exists,
+        opencode_workspace_path=status.opencode_workspace_path,
+        opencode_prompt_path=status.opencode_prompt_path,
     )
 
 
@@ -877,6 +996,271 @@ async def uninstall_claude_ctf_config():
     )
 
 
+@router.post("/ctf/opencode/install", response_model=CTFInstallResponse)
+async def install_opencode_ctf_config():
+    """安装 OpenCode CTF 配置"""
+    from codex_session_patcher.ctf_config import OpenCodeCTFInstaller
+    installer = OpenCodeCTFInstaller()
+
+    # 检查是否有自定义提示词
+    settings_data = _load_raw_config()
+    custom_prompt = settings_data.get('ctf_prompts', {}).get('opencode', {}).get('prompt')
+    success, message = installer.install(custom_prompt=custom_prompt)
+
+    await manager.broadcast(WSMessage(
+        type="log",
+        data={"level": "success" if success else "error", "message": message}
+    ))
+
+    return CTFInstallResponse(
+        success=success,
+        message=message,
+        profile_command="",
+        activation_command="cd ~/.opencode-ctf-workspace && opencode",
+    )
+
+
+@router.post("/ctf/opencode/uninstall", response_model=CTFInstallResponse)
+async def uninstall_opencode_ctf_config():
+    """卸载 OpenCode CTF 配置"""
+    from codex_session_patcher.ctf_config import OpenCodeCTFInstaller
+    installer = OpenCodeCTFInstaller()
+    success, message = installer.uninstall()
+
+    await manager.broadcast(WSMessage(
+        type="log",
+        data={"level": "success" if success else "error", "message": message}
+    ))
+
+    return CTFInstallResponse(
+        success=success,
+        message=message,
+        profile_command="",
+        activation_command="",
+    )
+
+
+# ─── CTF 提示词 CRUD ────────────────────────────────────────────────────────
+
+def _load_raw_config() -> dict:
+    """加载原始配置文件"""
+    if os.path.exists(DEFAULT_CONFIG_FILE):
+        try:
+            with open(DEFAULT_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            logger.warning("加载配置文件失败", exc_info=True)
+    return {}
+
+
+def _save_raw_config(data: dict):
+    """保存原始配置文件"""
+    config_dir = os.path.dirname(DEFAULT_CONFIG_FILE)
+    os.makedirs(config_dir, exist_ok=True)
+    os.chmod(config_dir, 0o700)
+    with open(DEFAULT_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.chmod(DEFAULT_CONFIG_FILE, 0o600)
+
+
+_CTF_PROMPT_PATHS = {
+    'codex': os.path.expanduser("~/.codex/prompts/security_mode.md"),
+    'claude_code': os.path.expanduser("~/.claude-ctf-workspace/.claude/CLAUDE.md"),
+    'opencode': os.path.expanduser("~/.opencode-ctf-workspace/AGENTS.md"),
+}
+
+
+def _read_ctf_prompt_for_tool(tool: str) -> str | None:
+    """读取工具当前实际安装的 CTF 提示词，未安装时从配置中读取自定义内容，都没有则返回 None"""
+    # 优先读已安装的实际文件
+    path = _CTF_PROMPT_PATHS.get(tool)
+    if path and os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    # 其次读用户保存到配置的自定义提示词
+    config = _load_raw_config()
+    saved = config.get('ctf_prompts', {}).get(tool, {}).get('prompt')
+    return saved or None
+
+
+def _get_default_prompt(tool: str) -> str:
+    """获取工具的默认提示词模板"""
+    from codex_session_patcher.ctf_config.templates import (
+        SECURITY_MODE_PROMPT, CLAUDE_CODE_SECURITY_MODE_PROMPT,
+        OPENCODE_SECURITY_MODE_PROMPT,
+    )
+    defaults = {
+        'codex': SECURITY_MODE_PROMPT,
+        'claude_code': CLAUDE_CODE_SECURITY_MODE_PROMPT,
+        'opencode': OPENCODE_SECURITY_MODE_PROMPT,
+    }
+    return defaults.get(tool, '')
+
+
+@router.get("/ctf/prompt/{tool}")
+async def get_ctf_prompt(tool: str):
+    """获取 CTF 提示词内容"""
+    if tool not in _CTF_PROMPT_PATHS:
+        raise HTTPException(status_code=400, detail=f"不支持的工具: {tool}")
+
+    prompt_path = _CTF_PROMPT_PATHS[tool]
+    default_prompt = _get_default_prompt(tool)
+    is_installed = os.path.exists(prompt_path)
+
+    # 已安装：读取实际文件
+    if is_installed:
+        try:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt = f.read()
+            return {
+                "prompt": prompt,
+                "is_installed": True,
+                "is_default": prompt.strip() == default_prompt.strip(),
+            }
+        except Exception:
+            logger.warning("读取提示词文件失败: %s", prompt_path, exc_info=True)
+
+    # 未安装：从配置或默认模板
+    config = _load_raw_config()
+    saved = config.get('ctf_prompts', {}).get(tool, {}).get('prompt')
+
+    return {
+        "prompt": saved or default_prompt,
+        "is_installed": False,
+        "is_default": saved is None,
+    }
+
+
+@router.post("/ctf/prompt/{tool}")
+async def save_ctf_prompt(tool: str, body: dict):
+    """保存 CTF 提示词"""
+    if tool not in _CTF_PROMPT_PATHS:
+        raise HTTPException(status_code=400, detail=f"不支持的工具: {tool}")
+
+    prompt = body.get('prompt', '')
+    if not prompt:
+        raise HTTPException(status_code=400, detail="提示词内容不能为空")
+
+    prompt_path = _CTF_PROMPT_PATHS[tool]
+
+    # 已安装：直接更新文件
+    if os.path.exists(prompt_path):
+        try:
+            with open(prompt_path, 'w', encoding='utf-8') as f:
+                f.write(prompt)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"写入文件失败: {e}")
+
+    # 同时保存到配置（供安装时使用）
+    config = _load_raw_config()
+    ctf_prompts = config.setdefault('ctf_prompts', {})
+    tool_config = ctf_prompts.setdefault(tool, {})
+    tool_config['prompt'] = prompt
+    _save_raw_config(config)
+
+    return {"success": True, "message": "提示词已保存"}
+
+
+@router.post("/ctf/prompt/{tool}/reset")
+async def reset_ctf_prompt(tool: str):
+    """恢复 CTF 提示词为默认值"""
+    if tool not in _CTF_PROMPT_PATHS:
+        raise HTTPException(status_code=400, detail=f"不支持的工具: {tool}")
+
+    default_prompt = _get_default_prompt(tool)
+    prompt_path = _CTF_PROMPT_PATHS[tool]
+
+    # 已安装：更新文件为默认
+    if os.path.exists(prompt_path):
+        try:
+            with open(prompt_path, 'w', encoding='utf-8') as f:
+                f.write(default_prompt)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"写入文件失败: {e}")
+
+    # 从配置中移除自定义提示词
+    config = _load_raw_config()
+    ctf_prompts = config.get('ctf_prompts', {})
+    if tool in ctf_prompts:
+        del ctf_prompts[tool]
+        _save_raw_config(config)
+
+    return {"success": True, "message": "已恢复默认提示词", "prompt": default_prompt}
+
+
+MAX_TEMPLATES = 5
+
+
+@router.get("/ctf/prompt/{tool}/templates")
+async def list_ctf_templates(tool: str):
+    """获取工具的所有提示词模板（内置模板 + 用户模板）"""
+    if tool not in _CTF_PROMPT_PATHS:
+        raise HTTPException(status_code=400, detail=f"不支持的工具: {tool}")
+
+    from codex_session_patcher.ctf_config.templates import BUILTIN_TEMPLATES
+    builtin = [dict(t, builtin=True) for t in BUILTIN_TEMPLATES.get(tool, [])]
+
+    config = _load_raw_config()
+    user_templates = config.get('ctf_templates', {}).get(tool, [])
+    return {"templates": builtin + user_templates}
+
+
+@router.post("/ctf/prompt/{tool}/templates")
+async def save_ctf_template(tool: str, body: dict):
+    """保存提示词为模板（最多 5 个）"""
+    if tool not in _CTF_PROMPT_PATHS:
+        raise HTTPException(status_code=400, detail=f"不支持的工具: {tool}")
+
+    name = body.get('name', '').strip()
+    prompt = body.get('prompt', '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="模板名称不能为空")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="模板内容不能为空")
+
+    config = _load_raw_config()
+    all_templates = config.setdefault('ctf_templates', {})
+    templates = all_templates.setdefault(tool, [])
+
+    # 同名覆盖
+    templates = [t for t in templates if t['name'] != name]
+    if len(templates) >= MAX_TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"最多保存 {MAX_TEMPLATES} 个模板")
+
+    templates.append({"name": name, "prompt": prompt})
+    all_templates[tool] = templates
+    _save_raw_config(config)
+
+    from codex_session_patcher.ctf_config.templates import BUILTIN_TEMPLATES
+    builtin = [dict(t, builtin=True) for t in BUILTIN_TEMPLATES.get(tool, [])]
+    return {"success": True, "message": "模板已保存", "templates": builtin + templates}
+
+
+@router.delete("/ctf/prompt/{tool}/templates/{template_name}")
+async def delete_ctf_template(tool: str, template_name: str):
+    """删除指定用户模板（内置模板不可删除）"""
+    if tool not in _CTF_PROMPT_PATHS:
+        raise HTTPException(status_code=400, detail=f"不支持的工具: {tool}")
+
+    from codex_session_patcher.ctf_config.templates import BUILTIN_TEMPLATES
+    if any(t['name'] == template_name for t in BUILTIN_TEMPLATES.get(tool, [])):
+        raise HTTPException(status_code=403, detail="内置模板不可删除")
+
+    config = _load_raw_config()
+    all_templates = config.get('ctf_templates', {})
+    templates = all_templates.get(tool, [])
+
+    new_templates = [t for t in templates if t['name'] != template_name]
+    if len(new_templates) == len(templates):
+        raise HTTPException(status_code=404, detail="模板不存在")
+
+    all_templates[tool] = new_templates
+    _save_raw_config(config)
+
+    builtin = [dict(t, builtin=True) for t in BUILTIN_TEMPLATES.get(tool, [])]
+    return {"success": True, "message": "模板已删除", "templates": builtin + new_templates}
+
+
 # ─── 提示词改写 API ─────────────────────────────────────────────────────────
 
 @router.post("/prompt-rewrite", response_model=PromptRewriteResponse)
@@ -898,13 +1282,23 @@ async def rewrite_prompt(request: PromptRewriteRequest):
         )
 
     try:
-        from .prompt_rewriter import rewrite_prompt
-        rewritten, strategy = await rewrite_prompt(
+        from .prompt_rewriter import rewrite_prompt as _do_rewrite
+
+        # 读取对应工具当前的 CTF 注入提示词（有则配合改写）
+        tool = request.target or 'codex'
+        ctf_prompt: str | None = None
+        try:
+            ctf_prompt = _read_ctf_prompt_for_tool(tool)
+        except Exception:
+            pass
+
+        rewritten, strategy = await _do_rewrite(
             request.original_request,
             settings.ai_endpoint,
             settings.ai_key,
             settings.ai_model,
-            target=request.target,
+            target=tool,
+            ctf_prompt=ctf_prompt,
         )
         return PromptRewriteResponse(
             success=True,

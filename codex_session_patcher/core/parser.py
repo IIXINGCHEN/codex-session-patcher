@@ -2,7 +2,9 @@
 """
 会话解析器 — 支持 Codex CLI 和 Claude Code 两种 JSONL 格式
 """
+from __future__ import annotations
 
+import logging
 import os
 import re
 import json
@@ -11,6 +13,8 @@ from typing import Dict, List, Any, Tuple, Optional
 from dataclasses import dataclass, field
 
 from .formats import SessionFormat, detect_session_format, decode_claude_project_path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,6 +37,7 @@ class SessionParser:
     DEFAULT_DIRS = {
         SessionFormat.CODEX: "~/.codex/sessions/",
         SessionFormat.CLAUDE_CODE: "~/.claude/projects/",
+        SessionFormat.OPENCODE: "~/.local/share/opencode/",
     }
 
     def __init__(self, session_dir: str = None, session_format: SessionFormat = None):
@@ -68,6 +73,7 @@ class SessionParser:
                     if info:
                         sessions.append(info)
                 except Exception:
+                    logger.debug("解析会话文件失败: %s", full_path, exc_info=True)
                     continue
 
         sessions.sort(key=lambda x: x.mtime, reverse=True)
@@ -159,31 +165,6 @@ class SessionParser:
         except Exception as e:
             raise ValueError(f"读取文件失败: {file_path}\n{e}")
         return lines
-
-    def read_last_n_bytes(self, file_path: str, n: int = 50000) -> List[Dict[str, Any]]:
-        """读取文件最后 N 字节并解析"""
-        try:
-            with open(file_path, 'rb') as f:
-                f.seek(0, 2)
-                file_size = f.tell()
-                start = max(0, file_size - n)
-                f.seek(start)
-                content = f.read().decode('utf-8', errors='ignore')
-
-            lines = []
-            for line_num, line in enumerate(content.split('\n'), 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    data['_line_num'] = line_num
-                    lines.append(data)
-                except json.JSONDecodeError:
-                    continue
-            return lines
-        except Exception as e:
-            raise ValueError(f"读取文件失败: {file_path}\n{e}")
 
 
 # ─── 向后兼容的模块级函数（Codex 格式专用） ─────────────────────────────────────

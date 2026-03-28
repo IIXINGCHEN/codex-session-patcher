@@ -43,3 +43,6 @@ htmlcov/
 
 # Project specific
 *.bak
+node_modules/
+web-logs/
+docs/plans/

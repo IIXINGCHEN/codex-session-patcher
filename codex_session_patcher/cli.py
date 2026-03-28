@@ -2,6 +2,7 @@
 """
 CLI 入口 - 命令行会话清理工具
 """
+from __future__ import annotations
 
 import os
 import sys
@@ -17,8 +18,10 @@ from .core import (
     SessionFormat,
     clean_session_jsonl,
     MOCK_RESPONSE,
+    OpenCodeDBAdapter,
 )
 from .core.patcher import save_session_jsonl
+from .core.sqlite_adapter import DEFAULT_OPENCODE_DB
 
 DEFAULT_CONFIG_FILE = os.path.expanduser('~/.codex-patcher/config.json')
 
@@ -63,6 +66,17 @@ def handle_ctf_status():
     else:
         print('  状态: ❌ 未安装')
         print('  安装命令: codex-patcher --install-claude-ctf')
+
+    # OpenCode 状态
+    print('\n[OpenCode]')
+    if status.opencode_installed:
+        print('  状态: ✅ 已安装')
+        print(f'  工作空间: {status.opencode_workspace_path}')
+        print(f'  AGENTS.md: {status.opencode_prompt_path}')
+        print('  激活命令: cd ~/.opencode-ctf-workspace && opencode')
+    else:
+        print('  状态: ❌ 未安装')
+        print('  安装命令: codex-patcher --install-opencode-ctf')
 
     print()
     print('注意: 修改后需要新开会话才能生效')
@@ -125,6 +139,38 @@ def handle_claude_ctf_uninstall():
     installer = ClaudeCodeCTFInstaller()
 
     print('正在卸载 Claude Code 安全测试配置...')
+    success, message = installer.uninstall()
+
+    if success:
+        print(f'✅ {message}')
+    else:
+        print(f'❌ {message}')
+
+
+def handle_opencode_ctf_install():
+    """安装 OpenCode CTF 配置"""
+    from .ctf_config import OpenCodeCTFInstaller
+    installer = OpenCodeCTFInstaller()
+
+    print('正在安装 OpenCode 安全测试配置...')
+    success, message = installer.install()
+
+    if success:
+        print(f'✅ {message}')
+        print()
+        print('激活命令: cd ~/.opencode-ctf-workspace && opencode')
+        print()
+        print('注意: OpenCode 没有 profile 功能，需要从 CTF 工作空间目录启动')
+    else:
+        print(f'❌ {message}')
+
+
+def handle_opencode_ctf_uninstall():
+    """卸载 OpenCode CTF 配置"""
+    from .ctf_config import OpenCodeCTFInstaller
+    installer = OpenCodeCTFInstaller()
+
+    print('正在卸载 OpenCode 安全测试配置...')
     success, message = installer.uninstall()
 
     if success:
@@ -198,16 +244,21 @@ def resolve_session_format(args) -> SessionFormat:
         return SessionFormat.CODEX
     elif fmt == 'claude-code':
         return SessionFormat.CLAUDE_CODE
+    elif fmt == 'opencode':
+        return SessionFormat.OPENCODE
     else:
         # auto 模式：如果指定了 session-dir，则自动检测
         if args.session_dir is not None and args.session_dir != argparse.SUPPRESS:
             codex_dir = os.path.expanduser("~/.codex/")
             claude_dir = os.path.expanduser("~/.claude/")
+            opencode_dir = os.path.expanduser("~/.local/share/opencode/")
             expanded = os.path.expanduser(args.session_dir)
             if expanded.startswith(codex_dir):
                 return SessionFormat.CODEX
             if expanded.startswith(claude_dir):
                 return SessionFormat.CLAUDE_CODE
+            if expanded.startswith(opencode_dir):
+                return SessionFormat.OPENCODE
 
         # 自动：如果两个目录都存在，优先 Codex（向后兼容）
         codex_dir = os.path.expanduser("~/.codex/sessions/")
@@ -225,13 +276,13 @@ def resolve_session_format(args) -> SessionFormat:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Session Patcher - 清理 Codex CLI / Claude Code 会话中的拒绝回复和无效 thinking blocks'
+        description='Session Patcher - 清理 Codex CLI / Claude Code / OpenCode 会话中的拒绝回复和无效 thinking blocks'
     )
 
     # 会话清理参数
     parser.add_argument('--session-dir', default=None,
                         help='会话目录 (默认根据 --format 自动选择)')
-    parser.add_argument('--format', choices=['codex', 'claude-code', 'auto'],
+    parser.add_argument('--format', choices=['codex', 'claude-code', 'opencode', 'auto'],
                         default='auto',
                         help='会话格式 (默认: auto 自动检测)')
     parser.add_argument('--dry-run', action='store_true', help='仅预览，不实际修改文件')
@@ -252,6 +303,9 @@ def main():
     # CTF 配置参数 — Claude Code
     parser.add_argument('--install-claude-ctf', action='store_true', help='安装 Claude Code 安全测试配置')
     parser.add_argument('--uninstall-claude-ctf', action='store_true', help='卸载 Claude Code 安全测试配置')
+    # CTF 配置参数 — OpenCode
+    parser.add_argument('--install-opencode-ctf', action='store_true', help='安装 OpenCode 安全测试配置')
+    parser.add_argument('--uninstall-opencode-ctf', action='store_true', help='卸载 OpenCode 安全测试配置')
 
     # 提示词改写参数
     parser.add_argument('--rewrite', type=str, metavar='REQUEST', help='改写提示词')
@@ -279,6 +333,14 @@ def main():
         handle_claude_ctf_uninstall()
         return
 
+    if args.install_opencode_ctf:
+        handle_opencode_ctf_install()
+        return
+
+    if args.uninstall_opencode_ctf:
+        handle_opencode_ctf_uninstall()
+        return
+
     # 提示词改写
     if args.rewrite:
         handle_rewrite(args.rewrite)
@@ -302,6 +364,12 @@ def main():
     # 解析会话格式
     session_format = resolve_session_format(args)
     session_dir = args.session_dir
+
+    # OpenCode 使用 SQLite，走单独路径
+    if session_format == SessionFormat.OPENCODE:
+        _cli_process_opencode(args, mock_response, custom_keywords)
+        return
+
     if session_dir is None:
         session_dir = SessionParser.DEFAULT_DIRS.get(session_format)
 
@@ -347,22 +415,7 @@ def main():
             print('  无需修改')
             continue
 
-        # 按类型统计
-        replace_count = sum(1 for c in changes if c.change_type == 'replace')
-        delete_count = sum(1 for c in changes if c.change_type == 'delete')
-        thinking_count = sum(1 for c in changes if c.change_type == 'remove_thinking')
-
-        print(f'  检测到 {len(changes)} 处修改:')
-        if replace_count:
-            print(f'    替换拒绝回复: {replace_count}')
-        if delete_count:
-            print(f'    删除推理内容: {delete_count}')
-        if thinking_count:
-            print(f'    移除 thinking blocks: {thinking_count}')
-
-        for change in changes:
-            if args.show_content and change.original_content:
-                print(f'    第 {change.line_num} 行 [{change.change_type}]: {change.original_content[:100]}')
+        _print_changes_summary(changes, args.show_content)
 
         if args.dry_run:
             print('  (预览模式，未修改文件)')
@@ -377,6 +430,90 @@ def main():
 
         # 保存修改
         save_session_jsonl(cleaned_lines, session.path)
+        print(f'  已保存修改')
+        total_modified += 1
+
+    print(f'\n完成: 共处理 {len(sessions)} 个会话，修改 {total_modified} 个')
+
+
+def _print_changes_summary(changes, show_content: bool = False):
+    """打印修改统计"""
+    replace_count = sum(1 for c in changes if c.change_type == 'replace')
+    delete_count = sum(1 for c in changes if c.change_type == 'delete')
+    thinking_count = sum(1 for c in changes if c.change_type == 'remove_thinking')
+
+    print(f'  检测到 {len(changes)} 处修改:')
+    if replace_count:
+        print(f'    替换拒绝回复: {replace_count}')
+    if delete_count:
+        print(f'    删除推理内容: {delete_count}')
+    if thinking_count:
+        print(f'    移除 thinking blocks: {thinking_count}')
+
+    for change in changes:
+        if show_content and change.original_content:
+            print(f'    第 {change.line_num} 行 [{change.change_type}]: {change.original_content[:100]}')
+
+
+def _cli_process_opencode(args, mock_response: str, custom_keywords):
+    """CLI 处理 OpenCode SQLite 会话"""
+    db_path = args.session_dir or DEFAULT_OPENCODE_DB
+
+    print(f'模式: OpenCode')
+    print(f'数据库: {db_path}')
+    print()
+
+    if not os.path.exists(db_path):
+        print(f'未找到 OpenCode 数据库: {db_path}')
+        sys.exit(0)
+
+    adapter = OpenCodeDBAdapter(db_path)
+    sessions = adapter.list_sessions()
+
+    if not sessions:
+        print('未找到会话')
+        sys.exit(0)
+
+    detector = RefusalDetector(custom_keywords)
+
+    if args.latest:
+        sessions = sessions[:1]
+    elif not args.all:
+        sessions = sessions[:1]
+
+    total_modified = 0
+    for session in sessions:
+        print(f'\n处理会话: {session.session_id}')
+
+        try:
+            lines = adapter.load_session_messages(session.session_id)
+        except Exception as e:
+            print(f'  读取失败: {e}')
+            continue
+
+        cleaned_lines, modified, changes = clean_session_jsonl(
+            lines, detector, show_content=args.show_content,
+            mock_response=mock_response,
+            session_format=SessionFormat.OPENCODE,
+        )
+
+        if not modified:
+            print('  无需修改')
+            continue
+
+        _print_changes_summary(changes, args.show_content)
+
+        if args.dry_run:
+            print('  (预览模式，未修改文件)')
+            continue
+
+        # 创建备份（整库备份）
+        if not args.no_backup:
+            backup_path = adapter.backup_database()
+            print(f'  备份: {backup_path}')
+
+        # 写回 SQLite
+        adapter.save_session_messages(session.session_id, cleaned_lines)
         print(f'  已保存修改')
         total_modified += 1
 

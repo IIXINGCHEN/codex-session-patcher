@@ -11,16 +11,20 @@ export const useSessionStore = defineStore('session', () => {
   const previewLoading = ref(false)
   const aiRewrite = ref(null)
   const aiRewriteLoading = ref(false)
-  const activeTab = ref('claude_code') // 'codex' | 'claude_code'
+  const lastError = ref(null) // 最近一次错误信息，组件层可监听并展示
+  const activeTab = ref('claude_code') // 'codex' | 'claude_code' | 'opencode'
 
   // 按格式拆分
   const codexSessions = computed(() => sessions.value.filter(s => s.format === 'codex'))
   const claudeSessions = computed(() => sessions.value.filter(s => s.format === 'claude_code'))
+  const opencodeSessions = computed(() => sessions.value.filter(s => s.format === 'opencode'))
 
   // 当前 Tab 的会话
-  const activeTabSessions = computed(() =>
-    activeTab.value === 'codex' ? codexSessions.value : claudeSessions.value
-  )
+  const activeTabSessions = computed(() => {
+    if (activeTab.value === 'codex') return codexSessions.value
+    if (activeTab.value === 'opencode') return opencodeSessions.value
+    return claudeSessions.value
+  })
 
   async function fetchSessions(checkRefusal = true) {
     loading.value = true
@@ -33,6 +37,8 @@ export const useSessionStore = defineStore('session', () => {
       const settingsStore = useSettingsStore()
       if (settingsStore.claudeCodeEnabled && claudeSessions.value.length > 0) {
         activeTab.value = 'claude_code'
+      } else if (opencodeSessions.value.length > 0) {
+        activeTab.value = 'opencode'
       } else {
         activeTab.value = 'codex'
       }
@@ -43,6 +49,7 @@ export const useSessionStore = defineStore('session', () => {
       }
     } catch (error) {
       console.error('Failed to fetch sessions:', error)
+      lastError.value = error.message || '加载会话列表失败'
     } finally {
       loading.value = false
     }
@@ -70,6 +77,7 @@ export const useSessionStore = defineStore('session', () => {
       preview.value = data
     } catch (error) {
       console.error('Failed to preview session:', error)
+      lastError.value = error.message || '预览会话失败'
     } finally {
       previewLoading.value = false
     }
@@ -168,9 +176,11 @@ export const useSessionStore = defineStore('session', () => {
     previewLoading,
     aiRewrite,
     aiRewriteLoading,
+    lastError,
     activeTab,
     codexSessions,
     claudeSessions,
+    opencodeSessions,
     activeTabSessions,
     fetchSessions,
     setActiveTab,

@@ -11,9 +11,10 @@
       </div>
     </div>
 
-    <!-- 格式 Tab（仅启用 Claude Code 时显示） -->
-    <div v-if="settingsStore.claudeCodeEnabled" class="format-tabs">
+    <!-- 格式 Tab（多格式时显示） -->
+    <div v-if="settingsStore.claudeCodeEnabled || settingsStore.opencodeEnabled" class="format-tabs">
       <button
+        v-if="settingsStore.claudeCodeEnabled"
         class="format-tab"
         :class="{ active: sessionStore.activeTab === 'claude_code' }"
         @click="sessionStore.setActiveTab('claude_code')"
@@ -28,6 +29,15 @@
       >
         {{ $t('session.format_codex') }}
         <span class="tab-count">{{ sessionStore.codexSessions.length }}</span>
+      </button>
+      <button
+        v-if="settingsStore.opencodeEnabled"
+        class="format-tab"
+        :class="{ active: sessionStore.activeTab === 'opencode' }"
+        @click="sessionStore.setActiveTab('opencode')"
+      >
+        {{ $t('session.format_opencode') }}
+        <span class="tab-count">{{ sessionStore.opencodeSessions.length }}</span>
       </button>
     </div>
 
@@ -165,13 +175,23 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useMessage } from 'naive-ui'
 import { RefreshOutline, ChevronDownOutline, SearchOutline } from '@vicons/ionicons5'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 
 const { t } = useI18n()
+const message = useMessage()
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
+
+// 监听 store 错误并通知用户
+watch(() => sessionStore.lastError, (err) => {
+  if (err) {
+    message.error(err)
+    sessionStore.lastError = null
+  }
+})
 const expandedIds = reactive(new Set())
 const expandedGroups = reactive(new Set([t('session.today'), t('session.yesterday')]))
 
@@ -188,14 +208,21 @@ watch(() => settingsStore.showAllSessions, (val) => {
 
 // 关闭 Claude Code 支持时，强制切回 Codex
 watch(() => settingsStore.claudeCodeEnabled, (val) => {
-  if (!val && sessionStore.activeTab !== 'codex') {
+  if (!val && sessionStore.activeTab === 'claude_code') {
     sessionStore.setActiveTab('codex')
   }
 })
 
-// 当前可见的会话列表（受 Claude Code 开关影响）
+// 关闭 OpenCode 支持时，强制切回 Codex
+watch(() => settingsStore.opencodeEnabled, (val) => {
+  if (!val && sessionStore.activeTab === 'opencode') {
+    sessionStore.setActiveTab('codex')
+  }
+})
+
+// 当前可见的会话列表（受格式开关影响）
 const visibleSessions = computed(() => {
-  if (!settingsStore.claudeCodeEnabled) {
+  if (!settingsStore.claudeCodeEnabled && sessionStore.activeTab === 'claude_code') {
     return sessionStore.codexSessions
   }
   return sessionStore.activeTabSessions
