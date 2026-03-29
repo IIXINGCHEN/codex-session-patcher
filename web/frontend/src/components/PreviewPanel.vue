@@ -108,7 +108,12 @@
                 >
                   {{ changeTagLabel(change.type) }}
                 </n-tag>
-                <span class="line-num">L{{ change.line_num }}</span>
+                <span class="line-num">
+                  <template v-if="change.line_nums && change.line_nums.length > 1">
+                    {{ change.line_nums.map(n => 'L' + n).join(' ') }}
+                  </template>
+                  <template v-else>L{{ change.line_num }}</template>
+                </span>
               </div>
 
               <div v-if="change.type === 'replace'" class="change-content">
@@ -612,7 +617,5 @@ watch(() => sessionStore.selectedId, () => {
   word-break: break-word;
   margin: 0;
   line-height: 1.5;
-  max-height: 80px;
-  overflow: hidden;
 }
 </style>

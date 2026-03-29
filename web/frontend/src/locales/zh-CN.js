@@ -141,7 +141,7 @@ export default {
     copyResult: '复制结果',
     noOriginal: '请输入原始请求',
     noAiConfig: '请先在「设置」中配置 AI API',
-    aiAnalyze: 'AI 分析',
+    aiAnalyze: 'AI 改写',
     aiGenerated: 'AI 已生成',
     claudeDesc: '创建专用 CTF 工作空间（~/.claude-ctf-workspace），通过项目级 CLAUDE.md 注入安全测试上下文。',
     activationCommand: '激活命令',

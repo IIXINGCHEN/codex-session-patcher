@@ -301,6 +301,14 @@ onMounted(() => {
     codexPromptText.value = ctfStore.prompts.codex.prompt
     claudePromptText.value = ctfStore.prompts.claude_code.prompt
     opencodePromptText.value = ctfStore.prompts.opencode.prompt
+
+    // 如果当前提示词是默认值，自动应用 default:true 的内置模板
+    for (const tool of ['codex', 'claude_code', 'opencode']) {
+      if (ctfStore.prompts[tool].is_default) {
+        const defaultTpl = ctfStore.templates[tool].find(t => t.default === true)
+        if (defaultTpl) applyTemplate(tool, defaultTpl.name)
+      }
+    }
   }, 500)
 })
 

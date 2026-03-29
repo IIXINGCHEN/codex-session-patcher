@@ -20,6 +20,7 @@ class ChangeDetail:
     change_type: str  # 'replace', 'delete', 'remove_thinking'
     original_content: Optional[str] = None
     new_content: Optional[str] = None
+    line_nums: Optional[List[int]] = None  # 所有关联行号（含冗余副本）
 
 
 def clean_session_jsonl(
@@ -52,21 +53,42 @@ def clean_session_jsonl(
 
     # 1. 替换拒绝的助手消息
     assistant_msgs = strategy.get_assistant_messages(lines)
+    # 先分组：primary（response_item）-> companion idxs（event_msg 冗余副本）
+    refusal_groups: List[Tuple[int, List[int]]] = []  # [(primary_idx, [companion_idxs])]
+    companion_set: set = set()
+    primary_map: dict = {}
     for msg_idx, msg in assistant_msgs:
         content = strategy.extract_text_content(msg)
-        if content and detector.detect(content):
-            change = ChangeDetail(
-                line_num=msg_idx + 1,
-                change_type='replace'
-            )
-            if show_content:
-                change.original_content = content[:500] + ('...' if len(content) > 500 else '')
-                change.new_content = mock_response
-            changes.append(change)
+        if not content or not detector.detect(content):
+            continue
+        if msg.get('type') == 'event_msg':
+            if refusal_groups:
+                refusal_groups[-1][1].append(msg_idx)
+            companion_set.add(msg_idx)
+        else:
+            refusal_groups.append((msg_idx, []))
 
-            updated_msg = strategy.update_text_content(msg, mock_response)
-            lines[msg_idx] = updated_msg
-            modified = True
+    for primary_idx, companion_idxs in refusal_groups:
+        primary_msg = lines[primary_idx]
+        content = strategy.extract_text_content(primary_msg)
+        all_line_nums = sorted([primary_idx + 1] + [i + 1 for i in companion_idxs])
+
+        change = ChangeDetail(
+            line_num=primary_idx + 1,
+            change_type='replace',
+            line_nums=all_line_nums,
+        )
+        if show_content:
+            change.original_content = content[:500] + ('...' if len(content) > 500 else '')
+            change.new_content = mock_response
+        changes.append(change)
+
+        # 替换 primary 行
+        lines[primary_idx] = strategy.update_text_content(primary_msg, mock_response)
+        # 替换所有 companion 行
+        for cidx in companion_idxs:
+            lines[cidx] = strategy.update_text_content(lines[cidx], mock_response)
+        modified = True
 
     # 2. 删除独立的 thinking/reasoning 行（Codex 格式）
     thinking_items = strategy.get_thinking_items(lines)

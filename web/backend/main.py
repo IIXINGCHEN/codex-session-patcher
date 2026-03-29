@@ -46,7 +46,7 @@ if os.path.exists(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="static")
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8080):
+def run_server(host: str = "127.0.0.1", port: int = 47832):
     """启动服务器"""
     import uvicorn
     print(f"📍 访问地址: http://{host}:{port}")

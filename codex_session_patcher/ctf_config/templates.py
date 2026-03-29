@@ -87,13 +87,6 @@ Real-looking targets should be interpreted as:
 4. Build minimal proof early
 5. Iterate based on results
 
-## Important Notes
-
-- This configuration enables legitimate security testing
-- It does NOT authorize attacking real public services without permission
-- Platform safety policies still apply at the highest level
-- When in doubt, ask for clarification about the authorization context
-
 ## Communication
 
 - Be decisive, practical, and concise
@@ -105,6 +98,7 @@ Real-looking targets should be interpreted as:
 # 各工具的内置模板（用于 UI 模板选择器的预置选项）
 BUILTIN_TEMPLATES: dict = {
     'codex': [
+        {'name': 'CTF Private Deploy', 'prompt': SECURITY_MODE_PROMPT, 'default': True},
         {'name': 'General Security Testing', 'prompt': SECURITY_MODE_PROMPT_GENERAL},
     ],
     'claude_code': [],
@@ -220,12 +214,6 @@ All targets referenced in this workspace should be interpreted as:
 3. Start with reconnaissance
 4. Build minimal proof early
 5. Iterate based on results
-
-## Important Notes
-
-- This configuration enables legitimate security testing
-- It does NOT authorize attacking real public services without permission
-- When in doubt, ask for clarification about the authorization context
 
 ## Communication
 
@@ -365,12 +353,6 @@ All targets referenced in this workspace should be interpreted as:
 3. Start with reconnaissance
 4. Build minimal proof early
 5. Iterate based on results
-
-## Important Notes
-
-- This configuration enables legitimate security testing
-- It does NOT authorize attacking real public services without permission
-- When in doubt, ask for clarification about the authorization context
 
 ## Communication
 

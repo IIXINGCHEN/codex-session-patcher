@@ -42,6 +42,9 @@ class RefusalDetector:
         # 中文
         "抱歉", "很抱歉", "对不起", "不好意思",
         "我无法", "我不能", "不允许", "禁止",
+        # 中文 - 省略主语的直接拒绝
+        "不能帮你", "不能协助", "无法帮你", "无法协助你",
+        "不会帮你", "不会帮助", "不能为你", "无法为你",
         # 英文
         "sorry", "apologize", "i cannot", "i can't",
         "i'm unable", "unable to", "not permitted", "not allowed",

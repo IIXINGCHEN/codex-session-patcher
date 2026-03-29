@@ -141,7 +141,7 @@ export default {
     copyResult: 'Copy Result',
     noOriginal: 'Please enter original request',
     noAiConfig: 'Please configure AI API in Settings first',
-    aiAnalyze: 'AI Analyze',
+    aiAnalyze: 'AI Rewrite',
     aiGenerated: 'AI Generated',
     claudeDesc: 'Create dedicated CTF workspace (~/.claude-ctf-workspace) with project-level CLAUDE.md for security testing context.',
     activationCommand: 'Activation Command',

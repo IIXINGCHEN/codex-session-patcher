@@ -58,10 +58,22 @@ class CodexFormatStrategy(FormatStrategy):
     def get_assistant_messages(self, lines):
         messages = []
         for idx, line in enumerate(lines):
-            if line.get('type') == 'response_item':
-                payload = line.get('payload', {})
+            line_type = line.get('type')
+            payload = line.get('payload', {})
+
+            # response_item: role=assistant（主消息结构）
+            if line_type == 'response_item':
                 if payload.get('type') == 'message' and payload.get('role') == 'assistant':
                     messages.append((idx, line))
+
+            # event_msg: agent_message（assistant 回复的冗余副本，resume 时展示用）
+            elif line_type == 'event_msg':
+                pt = payload.get('type')
+                if pt == 'agent_message' and payload.get('message'):
+                    messages.append((idx, line))
+                elif pt == 'task_complete' and payload.get('last_agent_message'):
+                    messages.append((idx, line))
+
         return messages
 
     def get_thinking_items(self, lines):
@@ -74,7 +86,19 @@ class CodexFormatStrategy(FormatStrategy):
         return items
 
     def extract_text_content(self, msg):
+        line_type = msg.get('type')
         payload = msg.get('payload', {})
+
+        # event_msg/agent_message
+        if line_type == 'event_msg':
+            pt = payload.get('type')
+            if pt == 'agent_message':
+                return payload.get('message', '')
+            if pt == 'task_complete':
+                return payload.get('last_agent_message', '')
+            return ''
+
+        # response_item/assistant
         content = payload.get('content', [])
         if isinstance(content, str):
             return content
@@ -88,7 +112,19 @@ class CodexFormatStrategy(FormatStrategy):
 
     def update_text_content(self, msg, new_text):
         updated = copy.deepcopy(msg)
+        line_type = updated.get('type')
         payload = updated.get('payload', {})
+
+        # event_msg/agent_message 和 event_msg/task_complete
+        if line_type == 'event_msg':
+            pt = payload.get('type')
+            if pt == 'agent_message':
+                payload['message'] = new_text
+            elif pt == 'task_complete':
+                payload['last_agent_message'] = new_text
+            return updated
+
+        # response_item/assistant
         content = payload.get('content', [])
         if isinstance(content, list):
             for item in content:

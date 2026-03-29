@@ -351,16 +351,34 @@ def preview_session(file_path: str, mock_response: str = MOCK_RESPONSE,
     # 检测拒绝 & 收集对话摘要
     assistant_msgs = strategy.get_assistant_messages(parsed_lines)
     refusal_lines = set()
+    # 先收集所有拒绝行（含 event_msg 冗余副本），按内容分组
+    refusal_groups: dict[int, list[int]] = {}  # primary_idx -> [companion_idxs]
+    primary_order: list[int] = []
     for idx, msg in assistant_msgs:
         content = strategy.extract_text_content(msg)
-        if content and detector.detect(content):
-            refusal_lines.add(idx)
-            changes.append(ChangeDetail(
-                line_num=idx + 1,
-                type=ChangeType.REPLACE,
-                original=content[:500] + ('...' if len(content) > 500 else ''),
-                replacement=mock_response
-            ))
+        if not content or not detector.detect(content):
+            continue
+        refusal_lines.add(idx)
+        if msg.get('type') == 'event_msg':
+            # 冗余副本：挂到最近的 primary 下
+            if primary_order:
+                refusal_groups[primary_order[-1]].append(idx)
+        else:
+            refusal_groups[idx] = []
+            primary_order.append(idx)
+
+    for primary_idx in primary_order:
+        companion_idxs = refusal_groups[primary_idx]
+        all_line_nums = sorted([primary_idx + 1] + [i + 1 for i in companion_idxs])
+        msg = parsed_lines[primary_idx]
+        content = strategy.extract_text_content(msg)
+        changes.append(ChangeDetail(
+            line_num=primary_idx + 1,
+            line_nums=all_line_nums,
+            type=ChangeType.REPLACE,
+            original=content[:500] + ('...' if len(content) > 500 else ''),
+            replacement=mock_response
+        ))
 
     # 收集对话摘要（user + assistant 消息）
     conversation_summary = []

@@ -22,6 +22,7 @@ class ChangeType(str, Enum):
 class ChangeDetail(BaseModel):
     """单个修改详情"""
     line_num: int
+    line_nums: List[int] = []   # 所有关联行号（含冗余副本），为空则只用 line_num
     type: ChangeType
     original: Optional[str] = None
     replacement: Optional[str] = None
